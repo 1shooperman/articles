@@ -21,27 +21,34 @@ const INVALID_FILENAME_CHARS = /[<>:"/\\|?*]/g;
 const YAML_LINE_WIDTH = 80;
 const DEFAULT_AUTHOR = 'Brandon Shoop';
 
-interface FieldInfo {
+export interface FieldInfo {
   name: string;
   required: boolean;
   type: 'string' | 'array' | 'object';
 }
 
-interface TemplateData {
+export type FieldValue = string | string[] | Array<{ text: string; url: string }> | undefined;
+
+export interface TemplateData {
   frontmatter: string;
   body: string;
   fields: FieldInfo[];
-  defaults: Record<string, any>;
+  defaults: Record<string, FieldValue>;
 }
 
-interface CollectedData {
-  [key: string]: any;
+export interface CollectedData {
+  [key: string]: FieldValue;
 }
 
-// Parse command line arguments
-function parseArgs(): { type?: string; name?: string } {
+/**
+ * Parse command line arguments from process.argv.
+ * Supports --type/-T, --name/-N, and --headless/-H flags.
+ * @returns Object containing parsed arguments (type, name, headless)
+ * @throws Error if a flag requiring a value is missing its value
+ */
+export function parseArgs(): { type?: string; name?: string; headless?: boolean } {
   const args = process.argv.slice(2);
-  const result: { type?: string; name?: string } = {};
+  const result: { type?: string; name?: string; headless?: boolean } = {};
 
   for (let i = 0; i < args.length; i++) {
     if (args[i] === '--type' || args[i] === '-T') {
@@ -54,6 +61,8 @@ function parseArgs(): { type?: string; name?: string } {
         throw new Error(`Missing value for ${args[i]}`);
       }
       result.name = args[++i];
+    } else if (args[i] === '--headless' || args[i] === '-H') {
+      result.headless = true;
     }
   }
 
@@ -76,13 +85,17 @@ function question(rl: readline.Interface, query: string): Promise<string> {
 }
 
 // Get template type (interactive menu if not provided)
-async function getTemplateType(rl: readline.Interface, providedType?: string): Promise<'blog' | 'project'> {
+async function getTemplateType(rl: readline.Interface, providedType?: string, headless: boolean = false): Promise<'blog' | 'project'> {
   if (providedType) {
     const normalized = providedType.toLowerCase();
     if (normalized === TEMPLATE_TYPES.BLOG || normalized === TEMPLATE_TYPES.PROJECT) {
       return normalized as 'blog' | 'project';
     }
     throw new Error(`Invalid type: ${providedType}. Must be 'blog' or 'project'.`);
+  }
+
+  if (headless) {
+    throw new Error('Template type is required in headless mode. Use --type or -T to specify.');
   }
 
   console.log('\nSelect template type:');
@@ -101,15 +114,24 @@ async function getTemplateType(rl: readline.Interface, providedType?: string): P
   }
 }
 
-// Sanitize filename to remove invalid characters
-function sanitizeFilename(filename: string): string {
-  return filename.replace(INVALID_FILENAME_CHARS, '-');
+/**
+ * Sanitize filename by removing invalid filesystem characters.
+ * Replaces invalid characters with dashes and collapses multiple dashes.
+ * @param filename - The filename to sanitize
+ * @returns Sanitized filename safe for filesystem use
+ */
+export function sanitizeFilename(filename: string): string {
+  return filename.replace(INVALID_FILENAME_CHARS, '-').replace(/-+/g, '-');
 }
 
 // Get filename (prompt if not provided)
-async function getFilename(rl: readline.Interface, providedName?: string): Promise<string> {
+async function getFilename(rl: readline.Interface, providedName?: string, headless: boolean = false): Promise<string> {
   if (providedName) {
     return sanitizeFilename(providedName);
+  }
+
+  if (headless) {
+    throw new Error('Filename is required in headless mode. Use --name or -N to specify.');
   }
 
   const answer = await question(rl, 'Enter filename (without .md extension): ');
@@ -120,8 +142,13 @@ async function getFilename(rl: readline.Interface, providedName?: string): Promi
   return sanitizeFilename(trimmed);
 }
 
-// Find frontmatter delimiters in template lines
-function findFrontmatterDelimiters(lines: string[]): { first: number; second: number } {
+/**
+ * Find the positions of frontmatter delimiters (---) in template lines.
+ * @param lines - Array of lines from the template file
+ * @returns Object with first and second delimiter line indices
+ * @throws Error if first or second delimiter is not found
+ */
+export function findFrontmatterDelimiters(lines: string[]): { first: number; second: number } {
   let firstDelimiter = -1;
   for (let i = 0; i < lines.length; i++) {
     if (lines[i].trim() === '---') {
@@ -149,8 +176,15 @@ function findFrontmatterDelimiters(lines: string[]): { first: number; second: nu
   return { first: firstDelimiter, second: secondDelimiter };
 }
 
-// Determine field type by examining the structure
-function determineFieldType(fieldName: string, frontmatterLines: string[], startIndex: number): 'string' | 'array' | 'object' {
+/**
+ * Determine the type of a field by examining its structure in the frontmatter.
+ * Checks for array indicators (dash-prefixed lines) and object structures (text/url pairs).
+ * @param fieldName - Name of the field to analyze
+ * @param frontmatterLines - Array of frontmatter lines
+ * @param startIndex - Starting index of the field definition
+ * @returns Field type: 'string', 'array', or 'object'
+ */
+export function determineFieldType(fieldName: string, frontmatterLines: string[], startIndex: number): 'string' | 'array' | 'object' {
   // Special case: links is always an object array
   if (fieldName === 'links') {
     return 'object';
@@ -159,7 +193,10 @@ function determineFieldType(fieldName: string, frontmatterLines: string[], start
   // Check if next non-empty line starts with dash (array indicator)
   for (let j = startIndex + 1; j < frontmatterLines.length; j++) {
     const nextLine = frontmatterLines[j].trim();
-    if (nextLine === '') continue;
+    if (nextLine === '') {
+      // Empty line separates fields, so this is a string field
+      return 'string';
+    }
     if (nextLine.startsWith('#')) break; // Hit next section or comment
     if (nextLine.startsWith('-')) {
       // Check if it's an object array (links have text: and url:)
@@ -175,8 +212,13 @@ function determineFieldType(fieldName: string, frontmatterLines: string[], start
   return 'string';
 }
 
-// Parse field definitions from frontmatter lines
-function parseFieldDefinitions(frontmatterLines: string[]): FieldInfo[] {
+/**
+ * Parse field definitions from frontmatter lines.
+ * Extracts field names, required/optional status, and types from template comments.
+ * @param frontmatterLines - Array of lines from the frontmatter section
+ * @returns Array of FieldInfo objects describing each field
+ */
+export function parseFieldDefinitions(frontmatterLines: string[]): FieldInfo[] {
   const fields: FieldInfo[] = [];
   let currentSection: 'required' | 'optional' | null = null;
 
@@ -204,8 +246,14 @@ function parseFieldDefinitions(frontmatterLines: string[]): FieldInfo[] {
     }
 
     // Parse field definitions - look for field name followed by colon
+    // Skip indented lines (they're part of nested structures)
     const fieldMatch = line.match(/^(\s*)(\w+):/);
     if (fieldMatch && currentSection) {
+      const indent = fieldMatch[1];
+      // Skip if indented (part of nested structure like object/array items)
+      if (indent.length > 0) {
+        continue;
+      }
       const fieldName = fieldMatch[2];
       const isRequired = currentSection === 'required';
       const fieldType = determineFieldType(fieldName, frontmatterLines, i);
@@ -221,8 +269,13 @@ function parseFieldDefinitions(frontmatterLines: string[]): FieldInfo[] {
   return fields;
 }
 
-// Read and parse template file
-function parseTemplate(templatePath: string): TemplateData {
+/**
+ * Read and parse a template file, extracting frontmatter, body, field definitions, and defaults.
+ * @param templatePath - Path to the template markdown file
+ * @returns TemplateData object containing parsed template information
+ * @throws Error if template file is not found or frontmatter is malformed
+ */
+export function parseTemplate(templatePath: string): TemplateData {
   if (!fs.existsSync(templatePath)) {
     throw new Error(`Template file not found: ${templatePath}`);
   }
@@ -254,9 +307,30 @@ function parseTemplate(templatePath: string): TemplateData {
     })
     .join('\n');
   
-  let defaults: Record<string, any> = {};
+  const defaults: Record<string, FieldValue> = {};
   try {
-    defaults = yaml.load(cleanFrontmatterLines) as Record<string, any> || {};
+    const parsed = yaml.load(cleanFrontmatterLines);
+    
+    // Validate that parsed result is an object
+    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+      const parsedObj = parsed as Record<string, unknown>;
+      // Filter out placeholder values (like <TITLE>, <DATE>, etc.)
+      for (const [key, value] of Object.entries(parsedObj)) {
+        // Validate value type matches FieldValue
+        if (
+          typeof value === 'string' ||
+          Array.isArray(value) ||
+          value === null ||
+          value === undefined
+        ) {
+          if (typeof value === 'string' && value.match(/^<[A-Z_]+>$/)) {
+            // Skip placeholder values
+            continue;
+          }
+          defaults[key] = value as FieldValue;
+        }
+      }
+    }
   } catch (error) {
     // If YAML parsing fails, defaults will remain empty
     // This is okay as defaults are optional
@@ -271,12 +345,13 @@ async function promptForField(
   rl: readline.Interface,
   field: FieldInfo,
   collectedData: CollectedData,
-  defaults: Record<string, any>,
-  authorDefault: string = DEFAULT_AUTHOR
+  defaults: Record<string, FieldValue>,
+  authorDefault: string = DEFAULT_AUTHOR,
+  headless: boolean = false
 ): Promise<void> {
   // Determine default value for this field
   let defaultValue: string | undefined;
-  let defaultValueRaw: any = undefined;
+  let defaultValueRaw: FieldValue = undefined;
   
   if (field.name === 'author') {
     defaultValue = authorDefault;
@@ -292,13 +367,40 @@ async function promptForField(
       }
     } else if (field.type === 'object' && field.name === 'links') {
       if (Array.isArray(defaultValueRaw)) {
-        defaultValue = defaultValueRaw.map((link: any) => `${link.text}:${link.url}`).join(', ');
+        const linksArray = defaultValueRaw as Array<{ text: string; url: string }>;
+        defaultValue = linksArray.map((link) => `${link.text}:${link.url}`).join(', ');
       } else {
         defaultValue = String(defaultValueRaw);
       }
     } else {
       defaultValue = String(defaultValueRaw);
     }
+  }
+
+  // In headless mode, use defaults or throw error for required fields
+  if (headless) {
+    if (field.required && defaultValueRaw === undefined) {
+      throw new Error(`Required field '${field.name}' has no default value. Provide a value or add a default to the template.`);
+    }
+    // Use default value if available
+    if (defaultValueRaw !== undefined) {
+      if (field.type === 'array') {
+        if (Array.isArray(defaultValueRaw)) {
+          collectedData[field.name] = defaultValueRaw;
+        } else {
+          collectedData[field.name] = String(defaultValueRaw).split(',').map(item => item.trim()).filter(item => item);
+        }
+      } else if (field.type === 'object' && field.name === 'links') {
+        if (Array.isArray(defaultValueRaw)) {
+          collectedData[field.name] = defaultValueRaw;
+        } else {
+          collectedData[field.name] = [];
+        }
+      } else {
+        collectedData[field.name] = defaultValueRaw;
+      }
+    }
+    return; // Skip prompting in headless mode
   }
 
   let promptText = `${field.name}${field.required ? ' (required)' : ' (optional, press Enter to skip)'}`;
@@ -340,7 +442,7 @@ async function promptForField(
         return;
       }
       console.log('This field is required. Please provide a value.');
-      return promptForField(rl, field, collectedData, defaults, authorDefault);
+      return promptForField(rl, field, collectedData, defaults, authorDefault, headless);
     } else {
       // For optional fields, use default if available
       if (defaultValueRaw !== undefined) {
@@ -384,8 +486,11 @@ async function promptForField(
   }
 }
 
-// Generate date string in YYYY-MM-DD format
-function generateDateString(): string {
+/**
+ * Generate current date string in YYYY-MM-DD format.
+ * @returns Date string in ISO date format (YYYY-MM-DD)
+ */
+export function generateDateString(): string {
   const now = new Date();
   const year = now.getFullYear();
   const month = String(now.getMonth() + 1).padStart(2, '0');
@@ -393,8 +498,13 @@ function generateDateString(): string {
   return `${year}-${month}-${day}`;
 }
 
-// Format collected data as YAML frontmatter
-function formatFrontmatter(data: CollectedData): string {
+/**
+ * Format collected data as YAML frontmatter string.
+ * Auto-generates date if not present in the data.
+ * @param data - Object containing field values to format
+ * @returns YAML-formatted frontmatter string
+ */
+export function formatFrontmatter(data: CollectedData): string {
   // Create a copy to avoid mutating the original
   const dataCopy = { ...data };
   
@@ -411,16 +521,26 @@ function formatFrontmatter(data: CollectedData): string {
   }).trim();
 }
 
-// Generate filename with collision detection
-function generateFilename(baseName: string, articlesDir: string): string {
+/**
+ * Generate filename with collision detection.
+ * Appends timestamp if file already exists to prevent overwriting.
+ * @param baseName - Base filename (with or without .md extension)
+ * @param articlesDir - Directory where articles are stored
+ * @returns Generated filename with .md extension
+ */
+export function generateFilename(baseName: string, articlesDir: string): string {
   let filename = baseName.endsWith('.md') ? baseName : `${baseName}.md`;
   let fullPath = path.join(articlesDir, filename);
 
   if (fs.existsSync(fullPath)) {
-    const epoch = Math.floor(Date.now() / 1000);
     const nameWithoutExt = baseName.replace(/\.md$/, '');
-    filename = `${nameWithoutExt}-${epoch}.md`;
-    fullPath = path.join(articlesDir, filename);
+    let counter = 0;
+    do {
+      const epoch = Math.floor(Date.now() / 1000);
+      filename = `${nameWithoutExt}-${epoch}${counter > 0 ? `-${counter}` : ''}.md`;
+      fullPath = path.join(articlesDir, filename);
+      counter++;
+    } while (fs.existsSync(fullPath) && counter < 1000);
     console.warn(`Warning: File already exists. Using filename: ${filename}`);
   }
 
@@ -466,12 +586,12 @@ async function main() {
     rl = createInterface();
 
     // Get template type
-    const templateType = await getTemplateType(rl, args.type);
+    const templateType = await getTemplateType(rl, args.type, args.headless || false);
     const templateFile = templateType === TEMPLATE_TYPES.BLOG ? TEMPLATE_FILES.BLOG : TEMPLATE_FILES.PROJECT;
     const templatePath = path.join(process.cwd(), templateFile);
 
     // Get filename
-    const filename = await getFilename(rl, args.name);
+    const filename = await getFilename(rl, args.name, args.headless || false);
 
     // Parse template
     const template = parseTemplate(templatePath);
@@ -482,7 +602,7 @@ async function main() {
     // Prompt for required fields first (skip date as it's auto-generated)
     const requiredFields = template.fields.filter(f => f.required && f.name !== 'date');
     for (const field of requiredFields) {
-      await promptForField(rl, field, collectedData, template.defaults, DEFAULT_AUTHOR);
+      await promptForField(rl, field, collectedData, template.defaults, DEFAULT_AUTHOR, args.headless || false);
     }
     
     // Ensure date is set (will be auto-generated in formatFrontmatter if missing)
@@ -490,7 +610,7 @@ async function main() {
     // Prompt for optional fields
     const optionalFields = template.fields.filter(f => !f.required);
     for (const field of optionalFields) {
-      await promptForField(rl, field, collectedData, template.defaults, DEFAULT_AUTHOR);
+      await promptForField(rl, field, collectedData, template.defaults, DEFAULT_AUTHOR, args.headless || false);
     }
 
     // Format frontmatter
@@ -510,6 +630,15 @@ async function main() {
   }
 }
 
-// Run main
-main();
+// Run main only when script is executed directly (not when imported)
+// Check if this file is being run directly (not imported as a module)
+const isMainModule = process.argv[1] && (
+  process.argv[1].endsWith('create-article.ts') ||
+  process.argv[1].endsWith('create-article.js') ||
+  process.argv[1].includes('create-article')
+);
+
+if (isMainModule && !process.env.JEST_WORKER_ID) {
+  main();
+}
 
