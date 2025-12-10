@@ -40,7 +40,12 @@ export interface CollectedData {
   [key: string]: FieldValue;
 }
 
-// Parse command line arguments
+/**
+ * Parse command line arguments from process.argv.
+ * Supports --type/-T, --name/-N, and --headless/-H flags.
+ * @returns Object containing parsed arguments (type, name, headless)
+ * @throws Error if a flag requiring a value is missing its value
+ */
 export function parseArgs(): { type?: string; name?: string; headless?: boolean } {
   const args = process.argv.slice(2);
   const result: { type?: string; name?: string; headless?: boolean } = {};
@@ -109,7 +114,12 @@ async function getTemplateType(rl: readline.Interface, providedType?: string, he
   }
 }
 
-// Sanitize filename to remove invalid characters
+/**
+ * Sanitize filename by removing invalid filesystem characters.
+ * Replaces invalid characters with dashes and collapses multiple dashes.
+ * @param filename - The filename to sanitize
+ * @returns Sanitized filename safe for filesystem use
+ */
 export function sanitizeFilename(filename: string): string {
   return filename.replace(INVALID_FILENAME_CHARS, '-').replace(/-+/g, '-');
 }
@@ -132,7 +142,12 @@ async function getFilename(rl: readline.Interface, providedName?: string, headle
   return sanitizeFilename(trimmed);
 }
 
-// Find frontmatter delimiters in template lines
+/**
+ * Find the positions of frontmatter delimiters (---) in template lines.
+ * @param lines - Array of lines from the template file
+ * @returns Object with first and second delimiter line indices
+ * @throws Error if first or second delimiter is not found
+ */
 export function findFrontmatterDelimiters(lines: string[]): { first: number; second: number } {
   let firstDelimiter = -1;
   for (let i = 0; i < lines.length; i++) {
@@ -161,7 +176,14 @@ export function findFrontmatterDelimiters(lines: string[]): { first: number; sec
   return { first: firstDelimiter, second: secondDelimiter };
 }
 
-// Determine field type by examining the structure
+/**
+ * Determine the type of a field by examining its structure in the frontmatter.
+ * Checks for array indicators (dash-prefixed lines) and object structures (text/url pairs).
+ * @param fieldName - Name of the field to analyze
+ * @param frontmatterLines - Array of frontmatter lines
+ * @param startIndex - Starting index of the field definition
+ * @returns Field type: 'string', 'array', or 'object'
+ */
 export function determineFieldType(fieldName: string, frontmatterLines: string[], startIndex: number): 'string' | 'array' | 'object' {
   // Special case: links is always an object array
   if (fieldName === 'links') {
@@ -190,7 +212,12 @@ export function determineFieldType(fieldName: string, frontmatterLines: string[]
   return 'string';
 }
 
-// Parse field definitions from frontmatter lines
+/**
+ * Parse field definitions from frontmatter lines.
+ * Extracts field names, required/optional status, and types from template comments.
+ * @param frontmatterLines - Array of lines from the frontmatter section
+ * @returns Array of FieldInfo objects describing each field
+ */
 export function parseFieldDefinitions(frontmatterLines: string[]): FieldInfo[] {
   const fields: FieldInfo[] = [];
   let currentSection: 'required' | 'optional' | null = null;
@@ -242,7 +269,12 @@ export function parseFieldDefinitions(frontmatterLines: string[]): FieldInfo[] {
   return fields;
 }
 
-// Read and parse template file
+/**
+ * Read and parse a template file, extracting frontmatter, body, field definitions, and defaults.
+ * @param templatePath - Path to the template markdown file
+ * @returns TemplateData object containing parsed template information
+ * @throws Error if template file is not found or frontmatter is malformed
+ */
 export function parseTemplate(templatePath: string): TemplateData {
   if (!fs.existsSync(templatePath)) {
     throw new Error(`Template file not found: ${templatePath}`);
@@ -277,14 +309,27 @@ export function parseTemplate(templatePath: string): TemplateData {
   
   const defaults: Record<string, FieldValue> = {};
   try {
-    const parsed = (yaml.load(cleanFrontmatterLines) as Record<string, FieldValue>) || {};
-    // Filter out placeholder values (like <TITLE>, <DATE>, etc.)
-    for (const [key, value] of Object.entries(parsed)) {
-      if (typeof value === 'string' && value.match(/^<[A-Z_]+>$/)) {
-        // Skip placeholder values
-        continue;
+    const parsed = yaml.load(cleanFrontmatterLines);
+    
+    // Validate that parsed result is an object
+    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+      const parsedObj = parsed as Record<string, unknown>;
+      // Filter out placeholder values (like <TITLE>, <DATE>, etc.)
+      for (const [key, value] of Object.entries(parsedObj)) {
+        // Validate value type matches FieldValue
+        if (
+          typeof value === 'string' ||
+          Array.isArray(value) ||
+          value === null ||
+          value === undefined
+        ) {
+          if (typeof value === 'string' && value.match(/^<[A-Z_]+>$/)) {
+            // Skip placeholder values
+            continue;
+          }
+          defaults[key] = value as FieldValue;
+        }
       }
-      defaults[key] = value;
     }
   } catch (error) {
     // If YAML parsing fails, defaults will remain empty
@@ -441,7 +486,10 @@ async function promptForField(
   }
 }
 
-// Generate date string in YYYY-MM-DD format
+/**
+ * Generate current date string in YYYY-MM-DD format.
+ * @returns Date string in ISO date format (YYYY-MM-DD)
+ */
 export function generateDateString(): string {
   const now = new Date();
   const year = now.getFullYear();
@@ -450,7 +498,12 @@ export function generateDateString(): string {
   return `${year}-${month}-${day}`;
 }
 
-// Format collected data as YAML frontmatter
+/**
+ * Format collected data as YAML frontmatter string.
+ * Auto-generates date if not present in the data.
+ * @param data - Object containing field values to format
+ * @returns YAML-formatted frontmatter string
+ */
 export function formatFrontmatter(data: CollectedData): string {
   // Create a copy to avoid mutating the original
   const dataCopy = { ...data };
@@ -468,7 +521,13 @@ export function formatFrontmatter(data: CollectedData): string {
   }).trim();
 }
 
-// Generate filename with collision detection
+/**
+ * Generate filename with collision detection.
+ * Appends timestamp if file already exists to prevent overwriting.
+ * @param baseName - Base filename (with or without .md extension)
+ * @param articlesDir - Directory where articles are stored
+ * @returns Generated filename with .md extension
+ */
 export function generateFilename(baseName: string, articlesDir: string): string {
   let filename = baseName.endsWith('.md') ? baseName : `${baseName}.md`;
   let fullPath = path.join(articlesDir, filename);

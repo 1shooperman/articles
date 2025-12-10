@@ -6,6 +6,7 @@
   "scripts": {
     "start": "npm run create",
     "test": "jest",
+    "test:watch": "jest --watch",
     "lint": "eslint .",
     "create": "tsx create-article.ts"
   },

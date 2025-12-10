@@ -25,6 +25,7 @@ export default tseslint.config(
       'coverage/**',
       'articles/**',
       '**/*.js',
+      'package-lock.json',
       'jest.config.js',
       'eslint.config.js',
     ],

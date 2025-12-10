@@ -15,10 +15,20 @@ describe('generateFilename', () => {
 
   afterEach(() => {
     // Clean up test files
-    const files = fs.readdirSync(testDir);
-    files.forEach(file => {
-      fs.unlinkSync(path.join(testDir, file));
-    });
+    try {
+      if (fs.existsSync(testDir)) {
+        const files = fs.readdirSync(testDir);
+        files.forEach(file => {
+          try {
+            fs.unlinkSync(path.join(testDir, file));
+          } catch {
+            // Ignore individual file deletion errors
+          }
+        });
+      }
+    } catch {
+      // Ignore cleanup errors to prevent test failures
+    }
   });
 
   afterAll(() => {
