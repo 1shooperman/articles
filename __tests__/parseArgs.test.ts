@@ -61,4 +61,24 @@ describe('parseArgs', () => {
     process.argv = ['node', 'script', '--unknown', 'value', '--type', 'blog'];
     expect(parseArgs()).toEqual({ type: 'blog' });
   });
+
+  it('should parse --headless argument', () => {
+    process.argv = ['node', 'script', '--headless'];
+    expect(parseArgs()).toEqual({ headless: true });
+  });
+
+  it('should parse -H argument', () => {
+    process.argv = ['node', 'script', '-H'];
+    expect(parseArgs()).toEqual({ headless: true });
+  });
+
+  it('should parse headless with other arguments', () => {
+    process.argv = ['node', 'script', '--headless', '--type', 'blog', '--name', 'my-article'];
+    expect(parseArgs()).toEqual({ headless: true, type: 'blog', name: 'my-article' });
+  });
+
+  it('should parse -H with other arguments', () => {
+    process.argv = ['node', 'script', '-H', '-T', 'project', '-N', 'test'];
+    expect(parseArgs()).toEqual({ headless: true, type: 'project', name: 'test' });
+  });
 });

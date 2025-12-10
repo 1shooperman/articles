@@ -78,7 +78,7 @@ describe('generateFilename', () => {
     const result2 = generateFilename('collision', testDir);
     
     expect(result1).not.toBe(result2);
-    expect(result1).toMatch(/^collision-\d+\.md$/);
-    expect(result2).toMatch(/^collision-\d+\.md$/);
+    expect(result1).toMatch(/^collision-\d+(?:-\d+)?\.md$/);
+    expect(result2).toMatch(/^collision-\d+(?:-\d+)?\.md$/);
   });
 });

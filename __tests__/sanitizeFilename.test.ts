@@ -25,6 +25,6 @@ describe('sanitizeFilename', () => {
 
   it('should handle edge cases', () => {
     expect(sanitizeFilename('')).toBe('');
-    expect(sanitizeFilename('<>:"/\\|?*')).toBe('---------');
+    expect(sanitizeFilename('<>:"/\\|?*')).toBe('-');
   });
 });

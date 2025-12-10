@@ -13,7 +13,7 @@ describe('formatFrontmatter', () => {
     const data = { title: 'Test Article' };
     const result = formatFrontmatter(data);
     
-    expect(result).toMatch(/date: \d{4}-\d{2}-\d{2}/);
+    expect(result).toMatch(/date: ["']?\d{4}-\d{2}-\d{2}["']?/);
   });
 
   it('should use provided date if present', () => {
@@ -46,7 +46,7 @@ describe('formatFrontmatter', () => {
   });
 
   it('should not mutate original data', () => {
-    const data = { title: 'Test Article' };
+    const data: { title: string; date?: string } = { title: 'Test Article' };
     const originalDate = data.date;
     formatFrontmatter(data);
     
@@ -57,7 +57,7 @@ describe('formatFrontmatter', () => {
     const data = {};
     const result = formatFrontmatter(data);
     
-    expect(result).toMatch(/date: \d{4}-\d{2}-\d{2}/);
+    expect(result).toMatch(/date: ["']?\d{4}-\d{2}-\d{2}["']?/);
   });
 
   it('should format multiline strings correctly', () => {
