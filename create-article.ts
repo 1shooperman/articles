@@ -21,25 +21,25 @@ const INVALID_FILENAME_CHARS = /[<>:"/\\|?*]/g;
 const YAML_LINE_WIDTH = 80;
 const DEFAULT_AUTHOR = 'Brandon Shoop';
 
-interface FieldInfo {
+export interface FieldInfo {
   name: string;
   required: boolean;
   type: 'string' | 'array' | 'object';
 }
 
-interface TemplateData {
+export interface TemplateData {
   frontmatter: string;
   body: string;
   fields: FieldInfo[];
   defaults: Record<string, any>;
 }
 
-interface CollectedData {
+export interface CollectedData {
   [key: string]: any;
 }
 
 // Parse command line arguments
-function parseArgs(): { type?: string; name?: string } {
+export function parseArgs(): { type?: string; name?: string } {
   const args = process.argv.slice(2);
   const result: { type?: string; name?: string } = {};
 
@@ -102,7 +102,7 @@ async function getTemplateType(rl: readline.Interface, providedType?: string): P
 }
 
 // Sanitize filename to remove invalid characters
-function sanitizeFilename(filename: string): string {
+export function sanitizeFilename(filename: string): string {
   return filename.replace(INVALID_FILENAME_CHARS, '-');
 }
 
@@ -121,7 +121,7 @@ async function getFilename(rl: readline.Interface, providedName?: string): Promi
 }
 
 // Find frontmatter delimiters in template lines
-function findFrontmatterDelimiters(lines: string[]): { first: number; second: number } {
+export function findFrontmatterDelimiters(lines: string[]): { first: number; second: number } {
   let firstDelimiter = -1;
   for (let i = 0; i < lines.length; i++) {
     if (lines[i].trim() === '---') {
@@ -150,7 +150,7 @@ function findFrontmatterDelimiters(lines: string[]): { first: number; second: nu
 }
 
 // Determine field type by examining the structure
-function determineFieldType(fieldName: string, frontmatterLines: string[], startIndex: number): 'string' | 'array' | 'object' {
+export function determineFieldType(fieldName: string, frontmatterLines: string[], startIndex: number): 'string' | 'array' | 'object' {
   // Special case: links is always an object array
   if (fieldName === 'links') {
     return 'object';
@@ -176,7 +176,7 @@ function determineFieldType(fieldName: string, frontmatterLines: string[], start
 }
 
 // Parse field definitions from frontmatter lines
-function parseFieldDefinitions(frontmatterLines: string[]): FieldInfo[] {
+export function parseFieldDefinitions(frontmatterLines: string[]): FieldInfo[] {
   const fields: FieldInfo[] = [];
   let currentSection: 'required' | 'optional' | null = null;
 
@@ -222,7 +222,7 @@ function parseFieldDefinitions(frontmatterLines: string[]): FieldInfo[] {
 }
 
 // Read and parse template file
-function parseTemplate(templatePath: string): TemplateData {
+export function parseTemplate(templatePath: string): TemplateData {
   if (!fs.existsSync(templatePath)) {
     throw new Error(`Template file not found: ${templatePath}`);
   }
@@ -385,7 +385,7 @@ async function promptForField(
 }
 
 // Generate date string in YYYY-MM-DD format
-function generateDateString(): string {
+export function generateDateString(): string {
   const now = new Date();
   const year = now.getFullYear();
   const month = String(now.getMonth() + 1).padStart(2, '0');
@@ -394,7 +394,7 @@ function generateDateString(): string {
 }
 
 // Format collected data as YAML frontmatter
-function formatFrontmatter(data: CollectedData): string {
+export function formatFrontmatter(data: CollectedData): string {
   // Create a copy to avoid mutating the original
   const dataCopy = { ...data };
   
@@ -412,7 +412,7 @@ function formatFrontmatter(data: CollectedData): string {
 }
 
 // Generate filename with collision detection
-function generateFilename(baseName: string, articlesDir: string): string {
+export function generateFilename(baseName: string, articlesDir: string): string {
   let filename = baseName.endsWith('.md') ? baseName : `${baseName}.md`;
   let fullPath = path.join(articlesDir, filename);
 
