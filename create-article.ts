@@ -19,6 +19,7 @@ const TEMPLATE_FILES = {
 const ARTICLES_DIR = 'articles';
 const INVALID_FILENAME_CHARS = /[<>:"/\\|?*]/g;
 const YAML_LINE_WIDTH = 80;
+const DEFAULT_AUTHOR = 'Brandon Shoop';
 
 interface FieldInfo {
   name: string;
@@ -30,6 +31,7 @@ interface TemplateData {
   frontmatter: string;
   body: string;
   fields: FieldInfo[];
+  defaults: Record<string, any>;
 }
 
 interface CollectedData {
@@ -238,21 +240,78 @@ function parseTemplate(templatePath: string): TemplateData {
   // Parse fields from frontmatter comments
   const fields = parseFieldDefinitions(frontmatterLines);
 
-  return { frontmatter, body, fields };
+  // Extract default values from template frontmatter YAML
+  // Filter out comment lines and section headers to get clean YAML
+  const cleanFrontmatterLines = frontmatterLines
+    .filter(line => {
+      const trimmed = line.trim();
+      // Skip section headers
+      if (trimmed.startsWith('# [')) return false;
+      // Skip pure comment lines (but keep commented-out fields that might be defaults)
+      if (trimmed === '' || trimmed.match(/^#\s*$/)) return false;
+      // Keep everything else (including lines that might have inline comments)
+      return true;
+    })
+    .join('\n');
+  
+  let defaults: Record<string, any> = {};
+  try {
+    defaults = yaml.load(cleanFrontmatterLines) as Record<string, any> || {};
+  } catch (error) {
+    // If YAML parsing fails, defaults will remain empty
+    // This is okay as defaults are optional
+    console.warn(`Warning: Could not parse defaults from template: ${error instanceof Error ? error.message : 'Unknown error'}`);
+  }
+
+  return { frontmatter, body, fields, defaults };
 }
 
 // Prompt for a field value
 async function promptForField(
   rl: readline.Interface,
   field: FieldInfo,
-  collectedData: CollectedData
+  collectedData: CollectedData,
+  defaults: Record<string, any>,
+  authorDefault: string = DEFAULT_AUTHOR
 ): Promise<void> {
-  let promptText = `${field.name}${field.required ? ' (required)' : ' (optional, press Enter to skip)'}: `;
+  // Determine default value for this field
+  let defaultValue: string | undefined;
+  let defaultValueRaw: any = undefined;
+  
+  if (field.name === 'author') {
+    defaultValue = authorDefault;
+    defaultValueRaw = authorDefault;
+  } else if (defaults[field.name] !== undefined) {
+    defaultValueRaw = defaults[field.name];
+    // Handle different types appropriately for display
+    if (field.type === 'array') {
+      if (Array.isArray(defaultValueRaw)) {
+        defaultValue = defaultValueRaw.join(', ');
+      } else {
+        defaultValue = String(defaultValueRaw);
+      }
+    } else if (field.type === 'object' && field.name === 'links') {
+      if (Array.isArray(defaultValueRaw)) {
+        defaultValue = defaultValueRaw.map((link: any) => `${link.text}:${link.url}`).join(', ');
+      } else {
+        defaultValue = String(defaultValueRaw);
+      }
+    } else {
+      defaultValue = String(defaultValueRaw);
+    }
+  }
+
+  let promptText = `${field.name}${field.required ? ' (required)' : ' (optional, press Enter to skip)'}`;
+  if (defaultValue) {
+    promptText += ` [default: ${defaultValue}]`;
+  }
   
   if (field.type === 'array') {
-    promptText = `${field.name}${field.required ? ' (required)' : ' (optional, press Enter to skip)'} - comma-separated values: `;
+    promptText += ' - comma-separated values: ';
   } else if (field.type === 'object' && field.name === 'links') {
-    promptText = `${field.name}${field.required ? ' (required)' : ' (optional, press Enter to skip)'} - format: "text:url,text:url": `;
+    promptText += ' - format: "text:url,text:url": ';
+  } else {
+    promptText += ': ';
   }
 
   const answer = await question(rl, promptText);
@@ -260,10 +319,49 @@ async function promptForField(
 
   if (!trimmed) {
     if (field.required) {
+      // Use default if available for required fields
+      if (defaultValueRaw !== undefined) {
+        if (field.type === 'array') {
+          if (Array.isArray(defaultValueRaw)) {
+            collectedData[field.name] = defaultValueRaw;
+          } else {
+            collectedData[field.name] = String(defaultValueRaw).split(',').map(item => item.trim()).filter(item => item);
+          }
+        } else if (field.type === 'object' && field.name === 'links') {
+          if (Array.isArray(defaultValueRaw)) {
+            collectedData[field.name] = defaultValueRaw;
+          } else {
+            // Fallback: try to parse as string if not already an array
+            collectedData[field.name] = [];
+          }
+        } else {
+          collectedData[field.name] = defaultValueRaw;
+        }
+        return;
+      }
       console.log('This field is required. Please provide a value.');
-      return promptForField(rl, field, collectedData);
+      return promptForField(rl, field, collectedData, defaults, authorDefault);
+    } else {
+      // For optional fields, use default if available
+      if (defaultValueRaw !== undefined) {
+        if (field.type === 'array') {
+          if (Array.isArray(defaultValueRaw)) {
+            collectedData[field.name] = defaultValueRaw;
+          } else {
+            collectedData[field.name] = String(defaultValueRaw).split(',').map(item => item.trim()).filter(item => item);
+          }
+        } else if (field.type === 'object' && field.name === 'links') {
+          if (Array.isArray(defaultValueRaw)) {
+            collectedData[field.name] = defaultValueRaw;
+          } else {
+            collectedData[field.name] = [];
+          }
+        } else {
+          collectedData[field.name] = defaultValueRaw;
+        }
+      }
+      return; // Skip optional fields
     }
-    return; // Skip optional fields
   }
 
   if (field.type === 'array') {
@@ -384,7 +482,7 @@ async function main() {
     // Prompt for required fields first (skip date as it's auto-generated)
     const requiredFields = template.fields.filter(f => f.required && f.name !== 'date');
     for (const field of requiredFields) {
-      await promptForField(rl, field, collectedData);
+      await promptForField(rl, field, collectedData, template.defaults, DEFAULT_AUTHOR);
     }
     
     // Ensure date is set (will be auto-generated in formatFrontmatter if missing)
@@ -392,7 +490,7 @@ async function main() {
     // Prompt for optional fields
     const optionalFields = template.fields.filter(f => !f.required);
     for (const field of optionalFields) {
-      await promptForField(rl, field, collectedData);
+      await promptForField(rl, field, collectedData, template.defaults, DEFAULT_AUTHOR);
     }
 
     // Format frontmatter
