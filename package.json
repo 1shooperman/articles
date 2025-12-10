@@ -6,9 +6,9 @@
     "test": "echo \"Error: no test specified\" && exit 1",
     "create": "tsx create-article.ts"
   },
-  "author": "",
-  "license": "ISC",
-  "description": "",
+  "author": "brandon shoop <brandon@aglflorida.com>",
+  "license": "MIT",
+  "description": "Article writing script.",
   "dependencies": {
     "js-yaml": "^4.1.0"
   },

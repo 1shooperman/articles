@@ -5,6 +5,21 @@ import * as path from 'path';
 import * as readline from 'readline';
 import * as yaml from 'js-yaml';
 
+// Constants
+const TEMPLATE_TYPES = {
+  BLOG: 'blog',
+  PROJECT: 'project',
+} as const;
+
+const TEMPLATE_FILES = {
+  BLOG: 'BLOG.md',
+  PROJECT: 'PROJECT.md',
+} as const;
+
+const ARTICLES_DIR = 'articles';
+const INVALID_FILENAME_CHARS = /[<>:"/\\|?*]/g;
+const YAML_LINE_WIDTH = 80;
+
 interface FieldInfo {
   name: string;
   required: boolean;
@@ -28,8 +43,14 @@ function parseArgs(): { type?: string; name?: string } {
 
   for (let i = 0; i < args.length; i++) {
     if (args[i] === '--type' || args[i] === '-T') {
+      if (i + 1 >= args.length) {
+        throw new Error(`Missing value for ${args[i]}`);
+      }
       result.type = args[++i];
     } else if (args[i] === '--name' || args[i] === '-N') {
+      if (i + 1 >= args.length) {
+        throw new Error(`Missing value for ${args[i]}`);
+      }
       result.name = args[++i];
     }
   }
@@ -56,11 +77,10 @@ function question(rl: readline.Interface, query: string): Promise<string> {
 async function getTemplateType(rl: readline.Interface, providedType?: string): Promise<'blog' | 'project'> {
   if (providedType) {
     const normalized = providedType.toLowerCase();
-    if (normalized === 'blog' || normalized === 'project') {
+    if (normalized === TEMPLATE_TYPES.BLOG || normalized === TEMPLATE_TYPES.PROJECT) {
       return normalized as 'blog' | 'project';
     }
-    console.error(`Invalid type: ${providedType}. Must be 'blog' or 'project'.`);
-    process.exit(1);
+    throw new Error(`Invalid type: ${providedType}. Must be 'blog' or 'project'.`);
   }
 
   console.log('\nSelect template type:');
@@ -70,40 +90,36 @@ async function getTemplateType(rl: readline.Interface, providedType?: string): P
   while (true) {
     const answer = await question(rl, 'Enter choice (1 or 2): ');
     if (answer === '1') {
-      return 'blog';
+      return TEMPLATE_TYPES.BLOG;
     } else if (answer === '2') {
-      return 'project';
+      return TEMPLATE_TYPES.PROJECT;
     } else {
       console.log('Invalid choice. Please enter 1 or 2.');
     }
   }
 }
 
+// Sanitize filename to remove invalid characters
+function sanitizeFilename(filename: string): string {
+  return filename.replace(INVALID_FILENAME_CHARS, '-');
+}
+
 // Get filename (prompt if not provided)
 async function getFilename(rl: readline.Interface, providedName?: string): Promise<string> {
   if (providedName) {
-    return providedName;
+    return sanitizeFilename(providedName);
   }
 
   const answer = await question(rl, 'Enter filename (without .md extension): ');
-  if (!answer.trim()) {
-    console.error('Filename cannot be empty.');
-    process.exit(1);
+  const trimmed = answer.trim();
+  if (!trimmed) {
+    throw new Error('Filename cannot be empty.');
   }
-  return answer.trim();
+  return sanitizeFilename(trimmed);
 }
 
-// Read and parse template file
-function parseTemplate(templatePath: string): TemplateData {
-  if (!fs.existsSync(templatePath)) {
-    console.error(`Template file not found: ${templatePath}`);
-    process.exit(1);
-  }
-
-  const content = fs.readFileSync(templatePath, 'utf-8');
-  const lines = content.split('\n');
-  
-  // Find the first --- delimiter
+// Find frontmatter delimiters in template lines
+function findFrontmatterDelimiters(lines: string[]): { first: number; second: number } {
   let firstDelimiter = -1;
   for (let i = 0; i < lines.length; i++) {
     if (lines[i].trim() === '---') {
@@ -113,11 +129,9 @@ function parseTemplate(templatePath: string): TemplateData {
   }
 
   if (firstDelimiter === -1) {
-    console.error('Template file does not contain frontmatter delimiters (---)');
-    process.exit(1);
+    throw new Error('Template file does not contain frontmatter delimiters (---)');
   }
 
-  // Find the second --- delimiter
   let secondDelimiter = -1;
   for (let i = firstDelimiter + 1; i < lines.length; i++) {
     if (lines[i].trim() === '---') {
@@ -127,16 +141,40 @@ function parseTemplate(templatePath: string): TemplateData {
   }
 
   if (secondDelimiter === -1) {
-    console.error('Template file does not contain closing frontmatter delimiter (---)');
-    process.exit(1);
+    throw new Error('Template file does not contain closing frontmatter delimiter (---)');
   }
 
-  // Extract frontmatter and body
-  const frontmatterLines = lines.slice(firstDelimiter + 1, secondDelimiter);
-  const frontmatter = frontmatterLines.join('\n');
-  const body = lines.slice(secondDelimiter + 1).join('\n');
+  return { first: firstDelimiter, second: secondDelimiter };
+}
 
-  // Parse fields from frontmatter comments
+// Determine field type by examining the structure
+function determineFieldType(fieldName: string, frontmatterLines: string[], startIndex: number): 'string' | 'array' | 'object' {
+  // Special case: links is always an object array
+  if (fieldName === 'links') {
+    return 'object';
+  }
+
+  // Check if next non-empty line starts with dash (array indicator)
+  for (let j = startIndex + 1; j < frontmatterLines.length; j++) {
+    const nextLine = frontmatterLines[j].trim();
+    if (nextLine === '') continue;
+    if (nextLine.startsWith('#')) break; // Hit next section or comment
+    if (nextLine.startsWith('-')) {
+      // Check if it's an object array (links have text: and url:)
+      if (nextLine.includes('text:') && nextLine.includes('url:')) {
+        return 'object';
+      } else {
+        return 'array';
+      }
+    }
+    break; // Only check the first non-empty line
+  }
+
+  return 'string';
+}
+
+// Parse field definitions from frontmatter lines
+function parseFieldDefinitions(frontmatterLines: string[]): FieldInfo[] {
   const fields: FieldInfo[] = [];
   let currentSection: 'required' | 'optional' | null = null;
 
@@ -168,30 +206,7 @@ function parseTemplate(templatePath: string): TemplateData {
     if (fieldMatch && currentSection) {
       const fieldName = fieldMatch[2];
       const isRequired = currentSection === 'required';
-      
-      // Determine field type by looking at the structure
-      let fieldType: 'string' | 'array' | 'object' = 'string';
-      
-      // Check if next non-empty line starts with dash (array indicator)
-      for (let j = i + 1; j < frontmatterLines.length; j++) {
-        const nextLine = frontmatterLines[j].trim();
-        if (nextLine === '') continue;
-        if (nextLine.startsWith('#')) break; // Hit next section or comment
-        if (nextLine.startsWith('-')) {
-          // Check if it's an object array (links have text: and url:)
-          if (nextLine.includes('text:') && nextLine.includes('url:')) {
-            fieldType = 'object';
-          } else {
-            fieldType = 'array';
-          }
-        }
-        break; // Only check the first non-empty line
-      }
-
-      // Special case: links is always an object array
-      if (fieldName === 'links') {
-        fieldType = 'object';
-      }
+      const fieldType = determineFieldType(fieldName, frontmatterLines, i);
 
       fields.push({
         name: fieldName,
@@ -200,6 +215,28 @@ function parseTemplate(templatePath: string): TemplateData {
       });
     }
   }
+
+  return fields;
+}
+
+// Read and parse template file
+function parseTemplate(templatePath: string): TemplateData {
+  if (!fs.existsSync(templatePath)) {
+    throw new Error(`Template file not found: ${templatePath}`);
+  }
+
+  const content = fs.readFileSync(templatePath, 'utf-8');
+  const lines = content.split('\n');
+  
+  const { first, second } = findFrontmatterDelimiters(lines);
+
+  // Extract frontmatter and body
+  const frontmatterLines = lines.slice(first + 1, second);
+  const frontmatter = frontmatterLines.join('\n');
+  const body = lines.slice(second + 1).join('\n');
+
+  // Parse fields from frontmatter comments
+  const fields = parseFieldDefinitions(frontmatterLines);
 
   return { frontmatter, body, fields };
 }
@@ -233,29 +270,43 @@ async function promptForField(
     collectedData[field.name] = trimmed.split(',').map(item => item.trim()).filter(item => item);
   } else if (field.type === 'object' && field.name === 'links') {
     // Parse links format: "text:url,text:url"
+    // Use indexOf to handle URLs with colons (e.g., https://example.com)
     const pairs = trimmed.split(',').map(pair => pair.trim());
     collectedData[field.name] = pairs.map(pair => {
-      const [text, url] = pair.split(':').map(s => s.trim());
+      const colonIndex = pair.indexOf(':');
+      if (colonIndex === -1) {
+        return null;
+      }
+      const text = pair.slice(0, colonIndex).trim();
+      const url = pair.slice(colonIndex + 1).trim();
       return { text, url };
-    }).filter(link => link.text && link.url);
+    }).filter((link): link is { text: string; url: string } => link !== null && link.text !== '' && link.url !== '');
   } else {
     collectedData[field.name] = trimmed;
   }
 }
 
+// Generate date string in YYYY-MM-DD format
+function generateDateString(): string {
+  const now = new Date();
+  const year = now.getFullYear();
+  const month = String(now.getMonth() + 1).padStart(2, '0');
+  const day = String(now.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
+
 // Format collected data as YAML frontmatter
 function formatFrontmatter(data: CollectedData): string {
+  // Create a copy to avoid mutating the original
+  const dataCopy = { ...data };
+  
   // Auto-generate date if not present
-  if (!data.date) {
-    const now = new Date();
-    const year = now.getFullYear();
-    const month = String(now.getMonth() + 1).padStart(2, '0');
-    const day = String(now.getDate()).padStart(2, '0');
-    data.date = `${year}-${month}-${day}`;
+  if (!dataCopy.date) {
+    dataCopy.date = generateDateString();
   }
 
-  return yaml.dump(data, {
-    lineWidth: -1,
+  return yaml.dump(dataCopy, {
+    lineWidth: YAML_LINE_WIDTH,
     noRefs: true,
     quotingType: '"',
     forceQuotes: false,
@@ -299,13 +350,26 @@ function writeArticle(
 
 // Main function
 async function main() {
-  const args = parseArgs();
-  const rl = createInterface();
+  let rl: readline.Interface | null = null;
+
+  // Handle graceful shutdown on SIGINT (Ctrl+C)
+  const cleanup = () => {
+    if (rl) {
+      rl.close();
+    }
+    process.exit(0);
+  };
+
+  process.on('SIGINT', cleanup);
+  process.on('SIGTERM', cleanup);
 
   try {
+    const args = parseArgs();
+    rl = createInterface();
+
     // Get template type
     const templateType = await getTemplateType(rl, args.type);
-    const templateFile = templateType === 'blog' ? 'BLOG.md' : 'PROJECT.md';
+    const templateFile = templateType === TEMPLATE_TYPES.BLOG ? TEMPLATE_FILES.BLOG : TEMPLATE_FILES.PROJECT;
     const templatePath = path.join(process.cwd(), templateFile);
 
     // Get filename
@@ -335,14 +399,16 @@ async function main() {
     const frontmatter = formatFrontmatter(collectedData);
 
     // Write file
-    const articlesDir = path.join(process.cwd(), 'articles');
+    const articlesDir = path.join(process.cwd(), ARTICLES_DIR);
     writeArticle(articlesDir, filename, frontmatter, template.body);
 
   } catch (error) {
-    console.error('Error:', error);
+    console.error('Error:', error instanceof Error ? error.message : error);
     process.exit(1);
   } finally {
-    rl.close();
+    if (rl) {
+      rl.close();
+    }
   }
 }
 
