@@ -547,6 +547,97 @@ export function generateFilename(baseName: string, articlesDir: string): string 
   return filename;
 }
 
+/**
+ * Build collected data from template defaults (headless-style, no prompts).
+ * Throws if a required field has no default.
+ */
+function collectDataFromDefaults(
+  template: TemplateData,
+  authorDefault: string = DEFAULT_AUTHOR
+): CollectedData {
+  const collectedData: CollectedData = {};
+  for (const field of template.fields) {
+    let value: FieldValue = field.name === 'author' ? authorDefault : template.defaults[field.name];
+    if (field.name === 'date' && value === undefined) {
+      value = generateDateString();
+    }
+    if (field.required && value === undefined) {
+      throw new Error(`Required field '${field.name}' has no default value. Provide a value or add a default to the template.`);
+    }
+    if (value !== undefined) {
+      if (field.type === 'array' && typeof value === 'string') {
+        collectedData[field.name] = value.split(',').map(item => item.trim()).filter(item => item);
+      } else if (field.type === 'object' && field.name === 'links' && !Array.isArray(value)) {
+        collectedData[field.name] = [];
+      } else {
+        collectedData[field.name] = value;
+      }
+    }
+  }
+  return collectedData;
+}
+
+/** Options for the programmatic createArticle API. */
+export interface CreateArticleOptions {
+  /** Template type: blog or project. */
+  type: 'blog' | 'project';
+  /** Filename without .md (will be sanitized). */
+  name: string;
+  /** Working directory for templates and articles dir (default: process.cwd()). */
+  cwd?: string;
+  /** Override template default frontmatter values. Partial; only provided keys override. */
+  frontmatterOverrides?: Record<string, FieldValue>;
+}
+
+/**
+ * Create an article programmatically (no prompts). Uses template defaults and merges
+ * frontmatterOverrides. Writes to articles/ under cwd and returns the absolute path of the file.
+ * @param options - type, name, optional cwd and frontmatterOverrides
+ * @returns Absolute path of the created file
+ */
+export function createArticle(options: CreateArticleOptions): string {
+  const { type, name, cwd = process.cwd(), frontmatterOverrides = {} } = options;
+
+  const normalizedType = type.toLowerCase();
+  if (normalizedType !== TEMPLATE_TYPES.BLOG && normalizedType !== TEMPLATE_TYPES.PROJECT) {
+    throw new Error(`Invalid type: ${type}. Must be 'blog' or 'project'.`);
+  }
+
+  const sanitizedName = sanitizeFilename(name);
+  if (!sanitizedName) {
+    throw new Error('Filename cannot be empty.');
+  }
+
+  const templateFile = normalizedType === TEMPLATE_TYPES.BLOG ? TEMPLATE_FILES.BLOG : TEMPLATE_FILES.PROJECT;
+  const templatePath = path.join(cwd, templateFile);
+  const template = parseTemplate(templatePath);
+
+  const collectedData = collectDataFromDefaults(template);
+  for (const [key, value] of Object.entries(frontmatterOverrides)) {
+    if (value !== undefined && value !== null) {
+      collectedData[key] = value;
+    }
+  }
+
+  const requiredFields = template.fields.filter(f => f.required && f.name !== 'date');
+  for (const field of requiredFields) {
+    if (collectedData[field.name] === undefined || collectedData[field.name] === '') {
+      throw new Error(`Required field '${field.name}' has no value. Provide it in frontmatterOverrides or ensure the template has a default.`);
+    }
+  }
+
+  const frontmatter = formatFrontmatter(collectedData);
+  const articlesDir = path.join(cwd, ARTICLES_DIR);
+  if (!fs.existsSync(articlesDir)) {
+    fs.mkdirSync(articlesDir, { recursive: true });
+  }
+  const finalFilename = generateFilename(sanitizedName, articlesDir);
+  const fullPath = path.join(articlesDir, finalFilename);
+  const content = `---\n${frontmatter}\n---\n${template.body}`;
+  fs.writeFileSync(fullPath, content, 'utf-8');
+  return path.resolve(fullPath);
+}
+
 // Write the article file
 function writeArticle(
   articlesDir: string,

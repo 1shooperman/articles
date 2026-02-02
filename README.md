@@ -99,6 +99,63 @@ Templates can include default values in their frontmatter. When you press Enter 
 
 Default values are displayed in prompts like: `title (required) [default: Your Default Title]:`
 
+## MCP Server
+
+An MCP (Model Context Protocol) server exposes the same article-creation flow to AI agents over stdio or Streamable HTTP.
+
+### Build and run
+
+**From a clone (build first):**
+
+From the repo root:
+
+```bash
+# Build root + mcp-server
+npm run build:mcp
+
+# Run over stdio (for Cursor / Claude Desktop)
+node mcp-server/dist/stdio.js
+
+# Run over Streamable HTTP (port 3000 by default)
+ARTICLES_MCP_PORT=3000 node mcp-server/dist/sse.js
+```
+
+**From a release (no build):**
+
+1. Download a release zip from the [Releases](https://github.com/bshoop/articles/releases) page (e.g. `articles-v1.0.0.zip`).
+2. Extract the zip and `cd` into the extracted folder.
+3. Install dependencies (the zip includes built `dist/` but not `node_modules`):
+
+   ```bash
+   npm ci
+   cd mcp-server && npm ci && cd ..
+   ```
+
+4. Run the MCP server:
+
+   ```bash
+   node mcp-server/dist/stdio.js
+   ```
+
+   Or for Streamable HTTP: `ARTICLES_MCP_PORT=3000 node mcp-server/dist/sse.js`
+
+In Cursor, use the **absolute path** to the extracted folder, e.g. `.../articles-v1.0.0/mcp-server/dist/stdio.js`.
+
+### Cursor configuration
+
+Add the server in Cursor (e.g. **Settings > MCP**) with **stdio**:
+
+- **Command:** `node`
+- **Args:** `["/absolute/path/to/articles/mcp-server/dist/stdio.js"]`
+
+Run from the articles repo root so templates and `articles/` resolve correctly. To use a different repo root, set `ARTICLES_REPO_ROOT` in the server’s `env` to the absolute path of the articles repo.
+
+### Copy to another project
+
+To copy each created article into another project (e.g. your blog repo), set **ARTICLES_COPY_TO** in the MCP server’s `env` to the target directory (absolute path recommended). The created file is written into the articles repo’s `articles/` dir and then copied to that path.
+
+See [mcp-server/README.md](mcp-server/README.md) for details.
+
 ## Project Structure
 
 ```
@@ -107,6 +164,7 @@ articles/
 ├── BLOG.md           # Blog post template
 ├── PROJECT.md        # Project documentation template
 ├── create-article.ts # Main script
+├── mcp-server/       # MCP server (stdio + Streamable HTTP)
 └── package.json      # Dependencies and scripts
 ```
 
@@ -146,7 +204,3 @@ If a file with the same name already exists, a timestamp suffix is added to prev
 ## Author
 
 Brandon Shoop
-
-## License
-
-MIT

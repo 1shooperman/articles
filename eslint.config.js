@@ -11,7 +11,7 @@ export default tseslint.config(
       parserOptions: {
         ecmaVersion: 2022,
         sourceType: 'module',
-        project: './tsconfig.json',
+        project: ['./tsconfig.json', './mcp-server/tsconfig.json'],
       },
     },
     rules: {
@@ -24,6 +24,8 @@ export default tseslint.config(
       'node_modules/**',
       'coverage/**',
       'articles/**',
+      'dist/**',
+      'mcp-server/dist/**',
       '**/*.js',
       'package-lock.json',
       'jest.config.js',
