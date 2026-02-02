@@ -110,3 +110,4 @@ out/
 *.backup
 *.old
 articles/*.md
+change-summary.md
