@@ -1,0 +1,134 @@
+name: Tag Release
+
+on:
+  workflow_run:
+    workflows: ['CI']
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      bump:
+        description: 'Version bump type'
+        required: true
+        default: 'patch'
+        type: choice
+        options:
+          - patch
+          - minor
+          - major
+
+permissions:
+  contents: write
+
+jobs:
+  tag-release:
+    if: github.event_name == 'workflow_dispatch' || (github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Get bump type
+        id: bump
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "type=${{ github.event.inputs.bump }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "type=patch" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Get Latest Git Tag or Current Version
+        id: current
+        run: |
+          if git describe --tags --abbrev=0 > /dev/null 2>&1; then
+            current_tag=$(git describe --tags --abbrev=0)
+            echo "tag=$current_tag" >> "$GITHUB_OUTPUT"
+            if [[ "$current_tag" =~ ^v([0-9]+)\.([0-9]+)\.([0-9]+)$ ]]; then
+              echo "major=${BASH_REMATCH[1]}" >> "$GITHUB_OUTPUT"
+              echo "minor=${BASH_REMATCH[2]}" >> "$GITHUB_OUTPUT"
+              echo "patch=${BASH_REMATCH[3]}" >> "$GITHUB_OUTPUT"
+            else
+              echo "major=0" >> "$GITHUB_OUTPUT"
+              echo "minor=0" >> "$GITHUB_OUTPUT"
+              echo "patch=0" >> "$GITHUB_OUTPUT"
+            fi
+          else
+            # No tag yet; use version from package.json
+            version=$(jq -r '.version' package.json)
+            if [[ "$version" =~ ^([0-9]+)\.([0-9]+)\.([0-9]+)$ ]]; then
+              echo "tag=v$version" >> "$GITHUB_OUTPUT"
+              echo "major=${BASH_REMATCH[1]}" >> "$GITHUB_OUTPUT"
+              echo "minor=${BASH_REMATCH[2]}" >> "$GITHUB_OUTPUT"
+              echo "patch=${BASH_REMATCH[3]}" >> "$GITHUB_OUTPUT"
+            else
+              echo "tag=v0.0.0" >> "$GITHUB_OUTPUT"
+              echo "major=0" >> "$GITHUB_OUTPUT"
+              echo "minor=0" >> "$GITHUB_OUTPUT"
+              echo "patch=0" >> "$GITHUB_OUTPUT"
+            fi
+          fi
+
+      - name: Compute Next Version
+        id: version
+        run: |
+          bump_type="${{ steps.bump.outputs.type }}"
+          major="${{ steps.current.outputs.major }}"
+          minor="${{ steps.current.outputs.minor }}"
+          patch="${{ steps.current.outputs.patch }}"
+          case "$bump_type" in
+            major)
+              major=$((major + 1))
+              minor=0
+              patch=0
+              ;;
+            minor)
+              minor=$((minor + 1))
+              patch=0
+              ;;
+            patch)
+              patch=$((patch + 1))
+              ;;
+            *)
+              patch=$((patch + 1))
+              ;;
+          esac
+          new_tag="v${major}.${minor}.${patch}"
+          version_only="${major}.${minor}.${patch}"
+          echo "tag=$new_tag" >> "$GITHUB_OUTPUT"
+          echo "version_only=$version_only" >> "$GITHUB_OUTPUT"
+
+      - name: Set version in package.json
+        run: |
+          jq --arg v "${{ steps.version.outputs.version_only }}" '.version = $v' package.json > package.json.tmp && mv package.json.tmp package.json
+
+      - name: Refresh lockfile
+        run: npm install
+
+      - name: Configure Git user
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+      - name: Commit and Push Version Bump
+        run: |
+          git add package.json package-lock.json
+          if git diff --cached --quiet; then
+            echo "No version change to commit."
+            exit 0
+          fi
+          commit_message="chore: bump version to ${{ steps.version.outputs.version_only }} [skip ci]"
+          sanitized_message=$(echo "$commit_message" | tr -d '\n' | sed 's/[^[:print:]]//g')
+          git commit -m "$sanitized_message"
+          git push
+
+      - name: Tag Release Commit
+        run: |
+          tag="${{ steps.version.outputs.tag }}"
+          if git rev-parse "$tag" >/dev/null 2>&1; then
+            echo "Tag $tag already exists. Skipping."
+            exit 0
+          fi
+          git tag -a "$tag" -m "Release $tag"
+          git push origin "$tag"
