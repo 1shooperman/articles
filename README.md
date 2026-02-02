@@ -105,6 +105,8 @@ An MCP (Model Context Protocol) server exposes the same article-creation flow to
 
 ### Build and run
 
+**From a clone (build first):**
+
 From the repo root:
 
 ```bash
@@ -117,6 +119,27 @@ node mcp-server/dist/stdio.js
 # Run over Streamable HTTP (port 3000 by default)
 ARTICLES_MCP_PORT=3000 node mcp-server/dist/sse.js
 ```
+
+**From a release (no build):**
+
+1. Download a release zip from the [Releases](https://github.com/bshoop/articles/releases) page (e.g. `articles-v1.0.0.zip`).
+2. Extract the zip and `cd` into the extracted folder.
+3. Install dependencies (the zip includes built `dist/` but not `node_modules`):
+
+   ```bash
+   npm ci
+   cd mcp-server && npm ci && cd ..
+   ```
+
+4. Run the MCP server:
+
+   ```bash
+   node mcp-server/dist/stdio.js
+   ```
+
+   Or for Streamable HTTP: `ARTICLES_MCP_PORT=3000 node mcp-server/dist/sse.js`
+
+In Cursor, use the **absolute path** to the extracted folder, e.g. `.../articles-v1.0.0/mcp-server/dist/stdio.js`.
 
 ### Cursor configuration
 
@@ -181,7 +204,3 @@ If a file with the same name already exists, a timestamp suffix is added to prev
 ## Author
 
 Brandon Shoop
-
-## License
-
-MIT
