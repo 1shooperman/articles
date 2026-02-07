@@ -379,6 +379,12 @@ async function promptForField(
 
   // In headless mode, use defaults or throw error for required fields
   if (headless) {
+    // Date is always auto-generated when missing (template often uses <DATE> placeholder)
+    const dateMissing = field.name === 'date' && (defaultValueRaw === undefined || defaultValueRaw === null || defaultValueRaw === '');
+    if (dateMissing) {
+      collectedData[field.name] = generateDateString();
+      return;
+    }
     if (field.required && defaultValueRaw === undefined) {
       throw new Error(`Required field '${field.name}' has no default value. Provide a value or add a default to the template.`);
     }
@@ -558,7 +564,9 @@ function collectDataFromDefaults(
   const collectedData: CollectedData = {};
   for (const field of template.fields) {
     let value: FieldValue = field.name === 'author' ? authorDefault : template.defaults[field.name];
-    if (field.name === 'date' && value === undefined) {
+    // Date is always auto-generated when missing (template often uses <DATE> placeholder which is not stored as default)
+    const dateMissing = field.name === 'date' && (value === undefined || value === null || value === '');
+    if (dateMissing) {
       value = generateDateString();
     }
     if (field.required && value === undefined) {
